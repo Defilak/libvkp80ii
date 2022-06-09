@@ -5,7 +5,7 @@ const Bytes = {
     long2ba: (num) => Bytes.num2ba(num, 8),
 
     num2ba(num, length = false) {
-        if (!length) length = Math.log2(num + 1) / 2
+        if (!length) length = Math.max(1, Math.log2(num + 1) / 8)
         let arr = Array(length)
 
         for (let i = 0; i < arr.length; i++) {
