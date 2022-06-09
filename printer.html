@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>ExitTicketPrinter Web</title>
+        <link
+            rel="stylesheet"
+            href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.1/dist/css/bootstrap.min.css"
+            integrity="sha384-zCbKRCUGaJDkqS1kPbPd7TveP5iyJE0EjAuZQTgFLD2ylzuqKfdKlfG/eSrtxUkn"
+            crossorigin="anonymous"
+        />
+        <script type="text/javascript" src="config.js" async="false"></script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="row justify-content-center">
+                <div id="security_alert" class="col-12 mt-4" style="display: none">
+                    <div class="alert alert-danger mb-0">
+                        <h6 class="alert-heading">Внимание!</h6>
+                        <span>Для корректной работы печати через WebUSB, страница должна быть открыта локально (двойным кликом) либо на сервере с HTTPS!</span>
+                    </div>
+                </div>
+                <div class="col-12 mt-4">
+                    <div class="card">
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-6">
+                                    <h5 class="card-title">Сервер</h5>
+                                    <h6 class="card-subtitle mb-2">
+                                        Статус:
+                                        <span
+                                            id="server_indicator"
+                                            class="badge badge-secondary"
+                                            >Не доступен</span
+                                        >
+                                    </h6>
+                                    <div class="card-text">
+                                        <p
+                                            id="license_status"
+                                            class="card-text"
+                                        ></p>
+                                        <p
+                                            id="logged_username"
+                                            class="card-text"
+                                        ></p>
+                                        <button
+                                            id="logout_btn"
+                                            style="display: none"
+                                            class="btn btn-sm btn-secondary"
+                                        >
+                                            Выйти
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="col-6 text-right"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="auth_block" class="col-12 mt-4" style="display: none">
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Авторизация</h5>
+                            <div class="card-text form-group">
+                                <select
+                                    id="auth_name"
+                                    class="custom-select mb-2"
+                                >
+                                    <option selected>Логин</option>
+                                </select>
+                                <input
+                                    id="auth_pass"
+                                    class="form-control mb-2"
+                                    type="password"
+                                    placeholder="Пароль"
+                                />
+                                <button id="auth_btn" class="btn btn-success">
+                                    Вход
+                                </button>
+                                <span
+                                    id="auth_status"
+                                    style="color: red"
+                                ></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="print_block" class="col-12 mt-4" style="display: none">
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Печать</h5>
+                            <div class="card-text">
+                                <div class="input-group mb-2">
+                                    <div class="input-group-prepend">
+                                        <label
+                                            class="input-group-text"
+                                            for="arendators_select"
+                                            >Арендатор</label
+                                        >
+                                    </div>
+                                    <select
+                                        id="arendators_select"
+                                        class="custom-select"
+                                    ></select>
+                                </div>
+
+                                <button
+                                    class="btn btn-primary"
+                                    onclick="createTicket()"
+                                >
+                                    Распечатать билет
+                                </button>
+                                <div id="print_status" style="color: red"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </body>
+
+    <script type="text/javascript">
+        //todo: поле ввода адреса сервера при локальном открытии (с сохранением в localstorage)
+        var activeUser = null
+        
+        async function fetchPost(action, payload) {
+            return await fetch(URL + action, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            })
+        }
+
+        logout_btn.onclick = function () {
+            localStorage.removeItem('user')
+            location.reload()
+        }
+
+        window.addEventListener('load', init)
+        async function init() {
+            if(!window.isSecureContext) {
+                security_alert.style = ''
+            }
+
+            const response = await fetch(URL + 'license')
+            if (response.ok) {
+                license_status.innerHTML = 'Лицензия: активна'
+            } else {
+                license_status.innerHTML = 'Лицензия: неактивна'
+                return
+            }
+
+            server_indicator.className = 'badge badge-success'
+            server_indicator.innerHTML = 'Доступен'
+
+            const localUser = localStorage.getItem('user')
+            if (localUser == null) {
+                initAuthBlock()
+            } else {
+                activeUser = JSON.parse(localUser)
+                logged_username.innerHTML = 'Пользователь: ' + activeUser.name
+                logout_btn.style = ''
+                initPrintBlock()
+            }
+        }
+
+        async function initAuthBlock() {
+            var response = await fetch(URL + 'users')
+            if (!response.ok) {
+                console.error('cant get users list!')
+                return
+            }
+
+            const users = await response.json()
+            users.forEach((user) => {
+                const option = document.createElement('option')
+                option.value = user.name
+                option.innerHTML = user.name
+                auth_name.append(option)
+            })
+
+            auth_btn.onclick = async function () {
+                var response = await fetchPost('login', {
+                    username: auth_name.value,
+                    password: auth_pass.value,
+                })
+                const json = await response.json()
+                if (!response.ok) {
+                    auth_status.innerHTML = json.message
+                    return
+                }
+
+                activeUser = json
+
+                localStorage.setItem('user', JSON.stringify(json))
+                auth_block.style = 'display:none'
+                logged_username.innerHTML = 'Пользователь: ' + activeUser.name
+                logout_btn.style = ''
+                initPrintBlock()
+            }
+
+            auth_block.style = ''
+            print_block.style = 'display:none'
+        }
+
+        async function initPrintBlock() {
+            const response = await fetch(URL + 'arendators')
+            if (response.ok) {
+                activeUser.arendators = await response.json()
+                activeUser.arendators.forEach((arendator) => {
+                    const option = document.createElement('option')
+                    option.value = arendator.id
+                    option.innerHTML = arendator.name
+                    arendators_select.append(option)
+                })
+            } else {
+                print_status.innerHTML = 'Не могу получить список арендаторов'
+            }
+
+            print_block.style = ''
+            auth_block.style = 'display:none'
+        }
+
+        async function createTicket() {
+            const arendator = activeUser.arendators.find(
+                (a) => a.id === arendators_select.value
+            )
+
+            const response = await fetchPost('create', {
+                user_id: activeUser.id,
+                key: activeUser.key,
+                arendator_id: arendator.id,
+            })
+            if (response.ok) {
+                const ticketData = await response.json()
+                if (ticketData.barcode) {
+                    printTicket(arendator, ticketData)
+                }
+            } else {
+                initAuthBlock()
+                print_status.innerHTML = 'error'
+            }
+        }
+
+        async function connect() {
+            try {
+                device = await navigator.usb.requestDevice({
+                    filters: [{ vendorId: 3540 }],
+                })
+                await device.open()
+
+                if (device.configuration === null) {
+                    await device.selectConfiguration(1)
+                }
+                await device.claimInterface(0)
+
+                //await cmd.sendCommand([0x1b, 0x74, 17]) //Установка cp866
+                await device.transferOut(
+                    endpoint,
+                    new Uint8Array([0x1b, 0x74, 17])
+                ) //Установка cp866
+
+                await cmd.justifyCenter() //центрирование
+                await cmd.sendCommand([0x1d, 0xf0, 0]) //print speed
+            } catch (e) {
+                document.getElementById('print_status').innerHTML = e
+                console.error(e)
+            }
+        }
+
+        async function printTicket(arendator, ticketData) {
+            try {
+                const printQr = true
+                if (device == null) await connect()
+
+                cmd.printLine('АВТОМАТИЧЕСКАЯ ПАРКОВКА')
+
+                cmd.setBold()
+                cmd.printLine('БИЛЕТ НА ВЫЕЗД')
+                cmd.printLine('')
+
+                //setItalic()
+                //setSmallFont()
+
+                cmd.clearPrintMode()
+                cmd.printLine('------------------------------')
+
+                //setSmallFont()
+                //setItalic()
+                cmd.sendCommand([0x1b, 0x21, 0x41])
+                cmd.printLine('Место для рекламы')
+                cmd.printLine('')
+
+                cmd.clearPrintMode()
+                cmd.printLine('------------------------------')
+
+                //clearPrintMode()
+                cmd.justifyLeft()
+                cmd.setPos()
+                cmd.printLine('Арендатор: ' + arendator.name)
+                cmd.printLine('Время: ' + ticketData.time)
+                cmd.justifyCenter()
+                cmd.setDefaultPos()
+                cmd.printLine('------------------------------')
+                cmd.printLine('')
+
+                //setSmallFont()
+                //setItalic()
+                cmd.sendCommand([0x1b, 0x21, 0x41])
+                cmd.printLine('Внимание!')
+                cmd.printLine('Не мните билет, сохраняйте')
+                cmd.printLine('билет до выезда с парковки')
+                cmd.printLine('')
+
+                if(printQr)
+                    cmd.printQrcode(ticketData.barcode)
+                else 
+                    cmd.printCode128(ticketData.barcode)
+
+                cmd.sendCommand([0x1b, 0x21, 0x41])
+                cmd.printLine('')
+                cmd.printLine('Спасибо за визит!')
+                cmd.printLine('')
+                //вытолкнуть чек
+                cmd.eject()
+            } catch (e) {
+                document.getElementById('print_status').innerHTML = e
+                console.error(e)
+            }
+        }
+        const endpoint = 2
+        var device = null
+
+        const cmd = {
+            justifyCenter() {
+                this.sendCommand([0x1b, 0x61, 1])
+            },
+
+            justifyLeft() {
+                this.sendCommand([0x1b, 0x61, 0])
+            },
+
+            sendCommand(arr) {
+                device.transferOut(endpoint, new Uint8Array(arr))
+            },
+
+            printLine(line) {
+                device.transferOut(endpoint, utf8_to_866(line + '\n'))
+            },
+
+            printAscii(text) {
+                let encoder = new TextEncoder()
+                let buffer = encoder.encode(text)
+                device.transferOut(endpoint, buffer)
+            },
+
+            setBold() {
+                this.sendCommand([0x1b, 0x21, 8]) //bold
+            },
+
+            setItalic() {
+                this.sendCommand([0x1b, 0x21, 64])
+            },
+
+            clearPrintMode() {
+                this.sendCommand([0x1b, 0x21, 0])
+            },
+
+            setSmallFont() {
+                this.sendCommand([0x1b, 0x21, 0x01])
+            },
+
+            setItalicBold() {
+                this.sendCommand([0x1b, 0x21, 0x48])
+            },
+
+            eject() {
+                this.sendCommand([0x1d, 0x65, 5])
+            },
+
+            setPos() {
+                this.sendCommand([0x1d, 0x4c, 90, 0]) //left margin
+                this.sendCommand([0x1d, 0x57, 64, 2]) //print width
+            },
+
+            setDefaultPos() {
+                this.sendCommand([0x1d, 0x4c, 0, 0]) //left margin
+                this.sendCommand([0x1d, 0x57, 64, 2]) //print width
+            },
+
+            printQrcode(barcode) {
+                const len = barcode.length + 3
+                const storepL = len % 256
+                const storepH = len / 256
+
+                this.justifyCenter()
+
+                //Specify encoding scheme of QRcode barcode
+                this.sendCommand([0x1D, 0x28, 0x6B, 0x03, 0x00, 49, 65, 0])
+
+                //Specify dot size of the module of the QRcode barcode 0x043?
+                this.sendCommand([0x1D, 0x28, 0x6B, 0x03, 0x00, 49, 66, 8]) //менять для смены размера
+
+                //Specify QRcode barcode size
+                this.sendCommand([0x1D, 0x28, 0x6B, 0x03, 0x00, 49, 67, 4]) 
+
+                //Specify the error correction level of the QRcode barcode
+                this.sendCommand([0x1D, 0x28, 0x6B, 0x03, 0x00, 49, 69, 1]) 
+
+                //Store the QRcode barcode data in the barcode save area
+                this.sendCommand([0x1D, 0x28, 0x6B, storepL, storepH, 49, 80, 49]) 
+
+                this.printAscii(barcode)
+
+                this.sendCommand([0x1D, 0x28, 0x6B, 0x03, 0x00, 49, 81, 49]) 
+            },
+
+            printqr1(text) {
+                const len = text.length
+                const storepL = len % 256
+                const storepH = len / 256
+
+                const model = [0x1d, 0x28, 0x6b,    0x04,    0x00, 0x31, 0x41, 0x32, 0x00];
+                const size =  [0x1d, 0x28, 0x6b,    0x03,    0x00, 0x31, 0x43, 0x03];
+                const ecc =   [0x1d, 0x28, 0x6b,    0x03,    0x00, 0x31, 0x45, 0x31];
+                const store = [0x1d, 0x28, 0x6b, storepL, storepH, 0x31, 0x50, 0x30];
+                const print = [0x1d, 0x28, 0x6b,    0x03,    0x00, 0x31, 0x51, 0x30];
+
+                this.sendCommand([...model, ...size, ...ecc, ...store])
+                this.printLine(text)
+                this.sendCommand(print);
+            },
+
+            printCode128(barcode) {
+                this.justifyLeft()
+                this.sendCommand([0x1b, 0x21, 0x41]) //italic & bold
+                this.sendCommand([0x1d, 0x4c, 90, 0]) //left margin
+                this.printLine(barcode)
+
+                this.justifyCenter()
+                this.sendCommand([0x1d, 0x4c, 0, 0]) //left margin
+                this.sendCommand([0x1d, 0x77, 2]) //barcode width
+                this.sendCommand([0x1d, 0x68, 255]) //barcode height
+                this.sendCommand([0x1d, 0x48, 0]) //don't print hri
+                this.sendCommand([
+                    0x1d,
+                    0x6b,
+                    73,
+                    barcode.length + 2,
+                    0x7b,
+                    0x41, //CODE A
+                ])
+                this.printAscii(barcode)
+            },
+        }
+
+        function utf8_to_866(aa) {
+            let c = 0
+            let ab = new Uint8Array(aa.length)
+
+            for (let i = 0; i < aa.length; i++) {
+                c = aa.charCodeAt(i)
+                if (c >= 1040 && c <= 1087) {
+                    ab[i] = c - 912
+                } else if (c >= 1088 && c <= 1105) {
+                    ab[i] = c - 864
+                } else {
+                    ab[i] = aa.charCodeAt(i)
+                }
+            }
+            return ab
+        }
+    </script>
+</html>
